@@ -1,0 +1,3 @@
+[submodule "thirdparty/cpdf-binaries"]
+	path = thirdparty/cpdf-binaries
+	url = git@github.com:coherentgraphics/cpdf-binaries.git

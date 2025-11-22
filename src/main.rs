@@ -1,9 +1,8 @@
 use clap::{CommandFactory, Parser};
-use std::collections::HashMap;
-use std::{fs, io, str};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
+use std::{fs, io, str};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -30,22 +29,20 @@ struct Cli {
     spreads: Option<Vec<u8>>,
 }
 
-
-
-fn get_system_architecture() {
-    #[derive(Hash, Eq, PartialEq)]
+fn get_cpdf_path_based_on_system() -> PathBuf {
+    #[derive(Hash, Eq, PartialEq, Debug)]
     enum ArchCpu {
         Intel,
-        Arm,
+        ARM,
     }
 
-    #[derive(Hash, Eq, PartialEq)]
+    #[derive(Hash, Eq, PartialEq, Debug)]
     enum ArchBit {
         B32,
         B64,
     }
 
-    #[derive(Hash, Eq, PartialEq)]
+    #[derive(Hash, Eq, PartialEq, Debug)]
     enum Os {
         Windows,
         Linux,
@@ -62,51 +59,44 @@ fn get_system_architecture() {
     let (arch_cpu, arch_bit): (ArchCpu, ArchBit) = match architecture {
         // intel 32?
         "x86" | "x86_64" => (ArchCpu::Intel, ArchBit::B64),
-        "arm"            => (ArchCpu::Arm, ArchBit::B32),
-        "aarch64"        => (ArchCpu::Arm, ArchBit::B64),
-        "loongarch32"    => (ArchCpu::Arm, ArchBit::B32),
-        "loongarch64"    => (ArchCpu::Arm, ArchBit::B64),
+        "arm" => (ArchCpu::ARM, ArchBit::B32),
+        "aarch64" => (ArchCpu::ARM, ArchBit::B64),
+        "loongarch32" => (ArchCpu::ARM, ArchBit::B32),
+        "loongarch64" => (ArchCpu::ARM, ArchBit::B64),
         _ => panic!("ERROR: Unsupported architecture: {architecture}"),
     };
 
-    let test = match family {
-        // TODO: match linux apple
-        // linux
+    let os: Os = match family {
         "unix" => {
-            match arch_cpu {
-                ArchCpu::Intel => {
-                    match arch_bit {
-                        ArchBit::B32 => "./Linux-Intel-32bit",
-                        ArchBit::B64 => "./Linux-Intel-64bit",
-                    };
-                },
-                ArchCpu::Arm => {
-                    match arch_bit {
-                        ArchBit::B32 => panic!("ERROR: cpdf doesn't support ARM-32 architecture"),
-                        ArchBit::B64 => "./Linux-ARM-64bit",
-                    };
-                },
-            };
-
-            // apple
-            match arch_cpu {
-                ArchCpu::Intel => "./OSX-Intel",
-                ArchCpu::Arm   => "./OSX-ARM",
-            };
-        },
-        "windows" => {
-            match arch_bit {
-                ArchBit::B32 => "./Windows32bit",
-                ArchBit::B64 => "./Windows64bit",
-            };
-        },
-        _ => panic!("ERROR: Doesn't support OS: {family}),
+            match os {
+                // TODO: expand
+                "linux" => Os::Linux,
+                "apple" | "macos" => Os::OSX,
+                _ => panic!("ERROR: Unsupported OS: {os}"),
+            }
+        }
+        "windows" => Os::Windows,
+        _ => panic!("ERROR: Unsupported OS family: {family}"),
     };
 
-    println!("cpdf path  = {:?}", test);
-    return;
-}
+    let cpdf_arch_path = match (&os, &arch_cpu, &arch_bit) {
+        (Os::Windows, _, ArchBit::B32) => "./Windows32bit/cpdf.exe",
+        (Os::Windows, _, ArchBit::B64) => "./Windows64bit/cpdf.exe",
+        (Os::OSX, ArchCpu::Intel, _) => "./OSX-Intel/cpdf",
+        (Os::OSX, ArchCpu::ARM, _) => "./OSX-ARM/cpdf",
+        (Os::Linux, ArchCpu::Intel, ArchBit::B32) => "./Linux-Intel-32bit/cpdf",
+        (Os::Linux, ArchCpu::Intel, ArchBit::B64) => "./Linux-Intel-64bit/cpdf",
+        (Os::Linux, ArchCpu::ARM, ArchBit::B64) => "./Linux-ARM-64bit/cpdf",
+        _ => panic!(
+            "ERROR: Unsupported system {:?} {:?} {:?}",
+            &os, &arch_cpu, &arch_bit
+        ),
+    };
 
+    let mut cpdf_path: PathBuf = PathBuf::from("./thirdparty/cpdf-binaries");
+    cpdf_path.push(cpdf_arch_path);
+    return fs::canonicalize(&cpdf_path).expect("Path to cpdf should always exist");
+}
 
 fn split_pdf(input_pdf: &PathBuf, output_dir: &PathBuf) -> Result<(), ()> {
     let input_file_str = input_pdf
@@ -157,12 +147,9 @@ fn split_pdf(input_pdf: &PathBuf, output_dir: &PathBuf) -> Result<(), ()> {
         }
     }
 
-    let mut cpdf_path: PathBuf = PathBuf::from("./thirdparty/cpdf-binaries");
-    // TODO: change OS version based on host machine
-    cpdf_path.push("/Linux-Intel-64bit/cpdf");
-    let cpdf_path = fs::canonicalize(&cpdf_path).expect("Path to cpdf should always exist");
-
+    let cpdf_path = get_cpdf_path_based_on_system();
     let mut cpdf = Command::new(&cpdf_path);
+
     let cpdf = cpdf.args([
         input_file_str,
         "-gs-quiet",
@@ -275,9 +262,6 @@ fn rename_page_spreads(input_spreads: &Vec<u8>, output_dir: &PathBuf) -> Result<
 
 fn main() -> Result<(), ()> {
     let cli = Cli::parse();
-
-    get_system_architecture();
-    exit(0);
 
     // theres probably a better way to do this,.,
     if let (None, None) = (&cli.input_file, &cli.spreads) {
